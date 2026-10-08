@@ -1,0 +1,12 @@
+node_modules/
+.env
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Sesiones de WhatsApp (ZlipBot)
+whatsapp-sessions/
+whatsapp-session/
+whatsapp_auth_session/
+RemoteAuth-session-*.zip
+.cache/
+.env
