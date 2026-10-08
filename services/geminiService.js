@@ -8,21 +8,26 @@ const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
  */
 const analizarMensajeCotizacion = async (textoMensaje) => {
     try {
-        const modelo = genAI.getGenerativeModel(
-            { model: 'gemini-1.5-flash' },
-            { apiVersion: 'v1' }
+        // Habilitamos v1beta para soportar responseSchema con JSON mode de forma estable
+        const modelo = ai.getGenerativeModel(
+            { model: 'gemini-2.5-flash' },
+            { apiVersion: 'v1beta' }
         );
 
         const promptSistema = `
-            Eres un asistente de IA experto en operaciones comerciales y CRM.
-            Tu objetivo es analizar un correo o WhatsApp de solicitud de presupuesto y extraer la información de forma estructurada.
-            
-            Debes extraer con precisión:
-            1. El nombre real del remitente (ej. "Malcolm Córdova"). No inventes nombres si no existen.
-            2. El nombre de la empresa (ej. "Klyntic"). Si no se menciona, usa "Particular".
-            3. Una LISTA DETALLADA de los productos solicitados. Cada ítem de la lista debe tener obligatoriamente: cantidad, descripción del producto (incluyendo modelos, procesadores o variaciones mencionadas) y notas adicionales si aplica.
+            Actúa como un agente experto en operaciones de sistemas CRM y procesamiento analítico de datos comerciales.
+            Tu tarea consiste en extraer de forma quirúrgica la información de una solicitud entrante para estructurarla en un formato JSON limpio.
 
-            Analiza detalladamente este mensaje: "${textoMensaje}"
+            INSTRUCCIONES CRÍTICAS DE EXTRACCIÓN:
+            1. NOMBRE DEL REMITENTE: Busca en el cuerpo o rigurosamente en la firma corporativa (debajo de '--'). Extrae el nombre real completo (Ej: "Malcolm Córdova"). Ignora títulos como Ing., Lic., Dr., etc.
+            2. EMPRESA: Identifica la organización (Ej: "Klyntic"). Si es un correo personal o no hay rastro institucional, coloca "Particular".
+            3. CANALES DE CONTACTO: Extrae el correo electrónico de contacto institucional que figure en la firma. Busca y extrae los números telefónicos/móviles completos incluyendo su código de área o prefijo internacional (Ej: "+58 412-952.88.00"). Si hay varios, sepáralos por comas.
+            4. LISTADO DE PRODUCTOS: Mapea línea por línea cada artículo solicitado con su cantidad numérica exacta y su descripción técnica con variables (modelos, procesadores, gamas). Si no se especifica cantidad, asume 1.
+
+            MENSAJE ENTRANTE DEL CLIENTE PARA ANALIZAR:
+            """
+            ${textoMensaje}
+            """
         `;
 
         const resultado = await modelo.generateContent({
@@ -32,35 +37,40 @@ const analizarMensajeCotizacion = async (textoMensaje) => {
                 responseSchema: {
                     type: 'OBJECT',
                     properties: {
-                        nombreExtraido: { type: 'STRING', description: 'Nombre completo del remitente.' },
-                        empresa: { type: 'STRING', description: 'Empresa o "Particular".' },
-                        // Cambiamos el string plano por un arreglo robusto de objetos
+                        nombreExtraido: { type: 'STRING', description: 'Nombre completo y real del remitente.' },
+                        empresa: { type: 'STRING', description: 'Nombre comercial de la empresa o "Particular".' },
+                        correoContacto: { type: 'STRING', description: 'Email institucional extraído de la firma del remitente.' },
+                        telefonos: { type: 'STRING', description: 'Teléfono o teléfonos corporativos con formato internacional si aplica.' },
                         productosLista: {
                             type: 'ARRAY',
-                            description: 'Lista de ítems explícitamente solicitados en el mensaje.',
+                            description: 'Colección indexada de cada uno de los productos o servicios solicitados.',
                             items: {
                                 type: 'OBJECT',
                                 properties: {
-                                    cantidad: { type: 'NUMBER', description: 'Cantidad solicitada. Si no se especifica, asume 1.' },
-                                    productoDetalle: { type: 'STRING', description: 'Nombre claro del producto con sus variables (Ej: "MacBook Pro M1 a M4").' }
+                                    cantidad: { type: 'NUMBER', description: 'Cantidad física solicitada.' },
+                                    productoDetalle: { type: 'STRING', description: 'Descripción detallada con variaciones de modelo o capacidad.' }
                                 },
                                 required: ['cantidad', 'productoDetalle']
                             }
                         }
                     },
-                    required: ['nombreExtraido', 'empresa', 'productosLista'],
+                    // Añadimos las nuevas propiedades como requeridas por la estructura del validador
+                    required: ['nombreExtraido', 'empresa', 'correoContacto', 'telefonos', 'productosLista'],
                 },
             },
         });
 
-        return JSON.parse(resultado.response.text());
+        const respuestaJson = JSON.parse(resultado.response.text());
+        console.log("🧠 [GEMINI PARSER]: Respuesta estructurada obtenida con éxito:", respuestaJson);
+        return respuestaJson;
 
     } catch (error) {
-        console.error('❌ [GEMINI SERVICE ERROR]:', error);
-        // Respuesta de contingencia estructurada correctamente
+        console.error('❌ [GEMINI SERVICE ERROR]: Falló la extracción estructurada del mensaje:', error);
         return { 
             nombreExtraido: 'Cliente Nuevo', 
-            empresa: 'Particular', 
+            empresa: 'Particular',
+            correoContacto: '',
+            telefonos: '', 
             productosLista: [{ cantidad: 1, productoDetalle: 'Producto por analizar' }] 
         };
     }

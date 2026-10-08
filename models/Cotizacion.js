@@ -21,6 +21,10 @@ const CotizacionSchema = new mongoose.Schema({
     
     // 🔥 NUEVO CAMPO: Colección exacta para renderizar en el Paso 2 de tu modal en Angular
     articulosDetallados: [ArticuloSolicitadoSchema], 
+    // 🔥 NUEVOS CAMPOS DE METADATOS:
+    tituloAsunto: { type: String, default: 'Solicitud Comercial' }, // Almacena el Subject del correo
+    fechaRecepcionOriginal: { type: Date, default: Date.now },       // Almacena la fecha exacta del email
+
     
     canalEntrada: { type: String, enum: ['whatsapp', 'correo'], required: true },
     

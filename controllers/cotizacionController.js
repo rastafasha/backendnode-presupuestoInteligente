@@ -1,21 +1,25 @@
 const Cliente = require('../models/Cliente');
 const Cotizacion = require('../models/Cotizacion');
 const Notificacion = require('../models/Notificacion'); // Importar el nuevo esquema
-const { analizarMensajeCotizacion } = require('../services/geminiService');
-const { enviarNotificacionPushGlobal } = require('../routes/notipushRoutes');
 const getWhatsappClient = require('../config/whatsapp');  // Trae el cliente activo de whatsapp-web.js
+const { enviarNotificacionPushGlobal } = require('../routes/notipushRoutes');
+const { analizarMensajeCotizacion } = require('../services/geminiService');
 const { enviarCorreoPropuesta } = require('../services/mailService'); // Trae tu Nodemailer
+const { buscarProveedoresWeb } = require('../services/scraperService'); // 🌟 Importamos tu servicio de búsqueda
 
 
 
-// Enviar la propuesta manual con ganancia calculada (Llamado desde la ruta HTTP de Angular)
+// Enviar la propuesta manual con ganancia calculada (Soporta individual y lote consolidado)
 const enviarPropuestaManual = async (req, res) => {
     const {
         cotizacionId,
+        canalEnvio,
+        // 🌟 Capturamos el nuevo array estructurado con los checkboxes de Angular
+        ofertasElegidas,
+        // Mantener propiedades sueltas por si usas algún botón individual antiguo
         porcentajeGanancia,
         precioCostoSeleccionado,
-        nombreProveedorSeleccionado,
-        canalEnvio // Puede ser 'whatsapp' o 'correo'
+        nombreProveedorSeleccionado
     } = req.body;
 
     try {
@@ -26,37 +30,70 @@ const enviarPropuestaManual = async (req, res) => {
         }
 
         const cliente = cotizacion.clienteId;
+        let precioFinalVentaAcumulado = 0;
+        let margenHistoricoGuardar = 0;
 
-        // 2. Calcular matemáticamente el precio de venta final con el margen
-        const margen = parseFloat(porcentajeGanancia);
-        const costo = parseFloat(precioCostoSeleccionado);
-        const precioFinalVenta = costo * (1 + (margen / 100));
+        // 🔀 DETERMINAR EL FORMATO DE ENTRADA: EMPAQUETAR A ARRAYS
+        let listaAProcesar = [];
+        if (ofertasElegidas && ofertasElegidas.length > 0) {
+            listaAProcesar = ofertasElegidas;
+            // Para el histórico guardamos el promedio de ganancia del lote o el del primer ítem
+            margenHistoricoGuardar = parseFloat(ofertasElegidas[0].gananciaAplicada) || 0;
+        } else {
+            // Fallback: Si se usó el formato viejo individual, lo convertimos a estructura de array
+            const costoSuero = parseFloat(precioCostoSeleccionado) || 0;
+            const margenSuelto = parseFloat(porcentajeGanancia) || 0;
+            margenHistoricoGuardar = margenSuelto;
+            
+            listaAProcesar = [{
+                articulo: cotizacion.productoSolicitado,
+                proveedor: nombreProveedorSeleccionado || 'Proveedor Web',
+                precioVenta: costoSuero * (1 + (margenSuelto / 100))
+            }];
+        }
+
+        // 📝 CONSTRUIR EL DESGLOSE LÍNEA POR LÍNEA Y CALCULAR EL TOTAL GENERAL SUMADO
+        let lineasProductosText = '';
+        listaAProcesar.forEach((item) => {
+            const precioVentaItem = parseFloat(item.precioVenta) || 0;
+            precioFinalVentaAcumulado += precioVentaItem;
+            
+            // Formato limpio con viñetas para el cuerpo del mensaje
+            lineasProductosText += `• *${item.articulo}* -> *$${precioVentaItem.toFixed(2)}*\n`;
+        });
 
         // --- CANAL DE ENVÍO: WHATSAPP ---
+        // --- CANAL DE ENVÍO: WHATSAPP (CONECTADO A TU MOTOR COMPLEJO) ---
         if (canalEnvio === 'whatsapp') {
             if (!cliente.telefono) {
                 return res.status(400).json({ ok: false, msg: 'Este cliente no posee un número de teléfono registrado.' });
             }
 
-            const clientWs = getWhatsappClient();
-            if (!clientWs) {
-                return res.status(500).json({ ok: false, msg: 'La pasarela de WhatsApp no está disponible en este momento.' });
-            }
+            // Formateamos el número limpio eliminando caracteres raros
+            const numeroLimpio = cliente.telefono.replace(/\D/g, '');
 
-            // Formatear el ID de WhatsApp según el estándar requerido (elimina el '+' si existe)
-            const chatId = `${cliente.telefono.replace(/\D/g, '')}@c.us`;
-
-            // Plantilla de WhatsApp comercial, directa y con emojis para mejor conversión
+            // Construimos la plantilla con el desglose de productos checkeados de Angular
             const plantillaWhatsapp =
                 `¡Hola, *${cliente.nombre}*! 👋🌟\n\n` +
-                `Te saludamos de tu plataforma de servicios. Con gusto te compartimos el presupuesto formal para tu solicitud de *${cotizacion.productoSolicitado}*:\n\n` +
-                `📦 *Detalle:* ${cotizacion.productoSolicitado}\n` +
-                `💰 *Precio Total Neto:* $${precioFinalVenta.toFixed(2)}\n\n` +
+                `Te saludamos de tu plataforma comercial. Con gusto te compartimos el presupuesto formal adaptado para tu solicitud:\n\n` +
+                `${lineasProductosText}\n` + 
+                `📊 *PRECIO TOTAL NETO:* *$${precioFinalVentaAcumulado.toFixed(2)}*\n\n` +
                 `Quedamos totalmente atentos a tus comentarios para procesar tu orden de inmediato. ¡Que tengas un excelente día! 🚀`;
 
-            // Enviar a través de Puppeteer de forma nativa
-            await clientWs.sendMessage(chatId, plantillaWhatsapp);
-            console.log(`💬 [WHATSAPP MANUAL]: Propuesta enviada con éxito a ${cliente.telefono}`);
+            // 🌟 INYECCIÓN MAESTRA: Usamos tu función con control de RAM e hilos de CPU
+            // Pasamos un ID fijo para tu aplicación (ej: 'sistema-presupuestos') o el del operador
+            const idInstanciaSegura = 'presupuesto-inteligente'; 
+            
+            const despachoExitoso = await enviarMensajeWhatsApp(idInstanciaSegura, numeroLimpio, plantillaWhatsapp);
+            
+            if (!despachoExitoso) {
+                return res.status(500).json({ 
+                    ok: false, 
+                    msg: 'La pasarela automatizada se está inicializando o requiere escaneo QR en el panel.' 
+                });
+            }
+            
+            console.log(`💬 [WHATSAPP MANUAL BLINDADO]: Propuesta enviada con éxito a ${cliente.telefono}`);
         }
 
         // --- CANAL DE ENVÍO: CORREO (GMAIL) ---
@@ -65,27 +102,29 @@ const enviarPropuestaManual = async (req, res) => {
                 return res.status(400).json({ ok: false, msg: 'Este cliente no posee un correo electrónico registrado.' });
             }
 
-            // Invoca a tu servicio Nodemailer inyectando la plantilla HTML
+            // Limpiamos los asteriscos de formato de WhatsApp para que el cuerpo del email sea plano y elegante
+            const textoLimpioEmail = lineasProductosText.replace(/\*/g, '');
+
             await enviarCorreoPropuesta(
                 cliente.correo,
                 cliente.nombre,
-                cotizacion.productoSolicitado,
-                precioFinalVenta
+                textoLimpioEmail,
+                precioFinalVentaAcumulado
             );
-            console.log(`📧 [GMAIL MANUAL]: Propuesta enviada con éxito a ${cliente.correo}`);
+            console.log(`📧 [GMAIL CONSOLIDADO]: Propuesta enviada con éxito a ${cliente.correo}`);
         }
 
         else {
             return res.status(400).json({ ok: false, msg: 'Canal de envío no válido configurado.' });
         }
 
-        // 3. Persistir en MongoDB los cambios aplicados y marcar la cotización como ENVIADA
-        cotizacion.porcentajeGanancia = margen;
-        cotizacion.precioFinalVenta = precioFinalVenta;
+        // 3. 🌟 PERSISTENCIA SEGURA EN MONGO: Guardamos números limpios y reales (Evitamos NaN)
+        cotizacion.porcentajeGanancia = margenHistoricoGuardar;
+        cotizacion.precioFinalVenta = precioFinalVentaAcumulado; // Guarda la sumatoria total del lote
         cotizacion.estado = 'enviado';
         await cotizacion.save();
 
-        // 4. Notificar a Angular por WebSockets que la fila se actualizó para removerla o cambiarle el color
+        // 4. Notificar a Angular por WebSockets para congelar o pintar las filas de la UI
         req.io.emit('cotizacion-enviada-exito', {
             cotizacionId: cotizacion._id,
             estado: cotizacion.estado,
@@ -94,8 +133,8 @@ const enviarPropuestaManual = async (req, res) => {
 
         return res.status(200).json({
             ok: true,
-            msg: `Propuesta enviada y registrada con éxito por ${canalEnvio}.`,
-            precioFinalVenta
+            msg: `Presupuesto consolidado enviado y registrado con éxito por ${canalEnvio}.`,
+            precioFinalVenta: precioFinalVentaAcumulado
         });
 
     } catch (error) {
@@ -107,69 +146,72 @@ const enviarPropuestaManual = async (req, res) => {
         });
     }
 };
+
 // Procesar el mensaje entrante (esta función la llamará el evento de WhatsApp)
 
 const procesarSolicitudEntrante = async (payload, io) => {
-    const { nombreCliente, telefono, correo, mensajeOriginal, canalEntrada } = payload;
+    // 🌟 AHORA RECIBIMOS: tituloAsunto y fechaOriginal desde ImapFlow o WhatsApp
+    const { nombreCliente, telefono, correo, mensajeOriginal, canalEntrada, tituloAsunto, fechaOriginal } = payload;
 
     try {
-        // 1. 🧠 LLAMAR A GEMINI para procesar y limpiar el texto crudo en segundo plano
         console.log('🧠 [IA]: Enviando mensaje a Gemini para extracción...');
         const analisisIA = await analizarMensajeCotizacion(mensajeOriginal);
 
-        // Si Gemini logró extraer un nombre real dentro del texto, lo priorizamos sobre el apodo de WhatsApp
         const nombreFinal = analisisIA.nombreExtraido.trim() !== '' ? analisisIA.nombreExtraido : nombreCliente;
+        const telefonoFinal = telefono || (analisisIA.telefonos ? analisisIA.telefonos.split(',')[0].trim() : undefined);
+        const correoFinal = correo || analisisIA.correoContacto || undefined;
 
-        // 2. CRM: Buscar o crear cliente actualizando con los datos finos de la IA (como la Empresa)
+        // CRM: Buscar o crear cliente
         let cliente = null;
-        if (telefono) {
-            cliente = await Cliente.findOne({ telefono });
-        } else if (correo) {
-            cliente = await Cliente.findOne({ correo });
+        if (telefonoFinal) {
+            cliente = await Cliente.findOne({ telefono: telefonoFinal });
+        } else if (correoFinal) {
+            cliente = await Cliente.findOne({ correo: correoFinal });
         }
 
         if (!cliente) {
             cliente = new Cliente({
                 nombre: nombreFinal,
-                telefono: telefono || undefined,
-                correo: correo || undefined,
-                empresa: analisisIA.empresa // Guardamos la empresa que detectó Gemini
+                telefono: telefonoFinal,
+                correo: correoFinal,
+                empresa: analisisIA.empresa
             });
             await cliente.save();
-        } else {
-            // Si el cliente ya existía pero no tenía empresa registrada y Gemini la encontró, la actualizamos
-            if (cliente.empresa === 'Particular' && analisisIA.empresa !== 'Particular') {
-                cliente.empresa = analisisIA.empresa;
-                await cliente.save();
-            }
         }
 
-        // 3. Crear la cotización en MongoDB con el producto real e impecable
-        // Mapeamos la lista de productos a un string amigable para notificaciones rápidas
+        // Búsqueda de proveedores en bloque para mitigar el error 429
+        let todosLosProveedores = [];
+        if (analisisIA.productosLista && analisisIA.productosLista.length > 0) {
+            todosLosProveedores = await buscarProveedoresWeb(analisisIA.productosLista);
+        }
+
         const resumenProductos = analisisIA.productosLista
             .map(p => `${p.cantidad}x ${p.productoDetalle}`)
             .join(', ');
 
-        // 3. Crear la cotización en MongoDB
+        // 🚀 GUARDADO EN MONGO: Inyectamos los nuevos metadatos nativos
         const nuevaCotizacion = new Cotizacion({
             clienteId: cliente._id,
-            productoSolicitado: resumenProductos, // Guardas el string compacto "1x Mac Book Pro..., 1x iPhone..."
-            articulosDetallados: analisisIA.productosLista, // 🔥 Asegúrate de tener este campo tipo Array en tu Schema de Mongoose si deseas persistir el JSON exacto
+            tituloAsunto: tituloAsunto || `Presupuesto: ${resumenProductos.substring(0, 30)}...`, // Fallback si no viene asunto
+            fechaRecepcionOriginal: fechaOriginal || new Date(), // Si no viene, asume la hora actual
+            productoSolicitado: resumenProductos, 
+            articulosDetallados: analisisIA.productosLista, 
+            proveedoresEncontrados: todosLosProveedores,   
             canalEntrada: canalEntrada,
-            estado: 'pendiente_analisis'
+            estado: todosLosProveedores.length > 0 ? 'listo_para_enviar' : 'pendiente_analisis'
         });
         await nuevaCotizacion.save();
 
-        // 1. Persistir la alerta en MongoDB para la campana de Angular
+        // Alerta histórica para la campana de Angular
         const alertaHistorica = new Notificacion({
-            titulo: '📦 Nueva Cotización Lista',
-            mensaje: `${cliente.nombre} (${canalEntrada}) solicitó: ${resumenProductos}`,
+            titulo: `📦 ${nuevaCotizacion.tituloAsunto}`,
+            mensaje: `${cliente.nombre} solicitó: ${resumenProductos}`,
             tipo: 'ANALISIS_COMPLETADO',
             referenciaCotizacionId: nuevaCotizacion._id
         });
         await alertaHistorica.save();
 
-        // 4. Formatear la data final limpia para enviar por WebSockets
+        // 🚀 ENVIAR POR WEBSOCKETS: Agregamos las propiedades para que Angular las lea inmediatamente
         const dataParaFrontend = {
             cotizacionId: nuevaCotizacion._id,
             cliente: {
@@ -179,35 +221,32 @@ const procesarSolicitudEntrante = async (payload, io) => {
                 telefono: cliente.telefono,
                 correo: cliente.correo
             },
+            tituloAsunto: nuevaCotizacion.tituloAsunto, // 🌟 Para usar como encabezado en la UI
+            fechaRecepcionOriginal: nuevaCotizacion.fechaRecepcionOriginal, // 🌟 Para mostrar la hora real del email
             productoSolicitado: nuevaCotizacion.productoSolicitado,
-            articulosDetallados: nuevaCotizacion.articulosDetallados, // Enviado directo al modal de Angular
+            articulosDetallados: nuevaCotizacion.articulosDetallados, 
+            proveedoresEncontrados: nuevaCotizacion.proveedoresEncontrados, 
             mensajeOriginal,
             canalEntrada,
             estado: nuevaCotizacion.estado,
             fecha: nuevaCotizacion.fechaSolicitud
         };
 
-        // Emitir los eventos a Angular en tiempo real
-        io.emit('nueva-solicitud-entrante', dataParaFrontend);
-        io.emit('nueva-notificacion-campana', alertaHistorica);
-
-        const tituloNoti = `📦 Nueva Cotización Lista`;
+        // 🔥 REINYECCIÓN CLAVE: Activamos la notificación Push Web para el navegador
+         const tituloNoti = `📦 Nueva Cotización Lista`;
         const cuerpoNoti = `${cliente.nombre} (${canalEntrada}) solicitó: ${resumenProductos}`;
-        await enviarNotificacionPushGlobal(tituloNoti, cuerpoNoti, '/cotizaciones');
+        
+        // Formateamos la URL de destino simulando los queryParams que espera tu router de Angular
+        const rutaDestinoAngular = `/dashboard/clients?cotId=${nuevaCotizacion._id}`;
+        
+        await enviarNotificacionPushGlobal(tituloNoti, cuerpoNoti, rutaDestinoAngular);
+        console.log(`🚀 [WEBPUSH]: Alerta despachada apuntando a: ${rutaDestinoAngular}`);
 
+        return dataParaFrontend;
         return dataParaFrontend;
 
     } catch (error) {
-        console.error("❌ [CONTROLADOR]: Error al procesar solicitud entrante:");
-        console.error(error.stack || error.message || error);
-        
-        // CORREGIDO: Evitamos validar variables inexistentes como 'res' si viene puro de IMAP
-        if (typeof res !== 'undefined' && res.status) {
-            return res.status(500).json({
-                success: false,
-                error: error.message
-            });
-        }
+        console.error("❌ [CONTROLADOR]: Error crítico al procesar solicitud entrante:", error);
     }
 };
 

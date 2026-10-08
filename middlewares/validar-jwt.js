@@ -39,7 +39,7 @@ const validarJWT = (req, res, next) => {
         req.uid = String(userId).trim(); 
         req.role = String(userRole).toUpperCase().trim();
 
-        console.log(`🔑 [NODE AUTH] Token de Laravel validado. Usuario: ${req.uid} | Rol: ${req.role}`);
+        console.log(`🔑 [NODE AUTH] Token validado. Usuario: ${req.uid} | Rol: ${req.role}`);
         next();
 
     } catch (error) {

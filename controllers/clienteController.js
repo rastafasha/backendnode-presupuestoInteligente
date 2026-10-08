@@ -106,7 +106,7 @@ const actualizarCliente = async (req, res) => {
         const clienteActualizado = await Cliente.findByIdAndUpdate(
             clienteId,
             { nombre, empresa, telefono, correo },
-            { new: true, runValidators: true } // new: true devuelve el objeto modificado de inmediato
+            { returnDocument: 'after', runValidators: true } 
         );
 
         if (!clienteActualizado) {
