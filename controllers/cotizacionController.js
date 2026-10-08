@@ -145,9 +145,16 @@ const procesarSolicitudEntrante = async (payload, io) => {
         }
 
         // 3. Crear la cotización en MongoDB con el producto real e impecable
+        // Mapeamos la lista de productos a un string amigable para notificaciones rápidas
+        const resumenProductos = analisisIA.productosLista
+            .map(p => `${p.cantidad}x ${p.productoDetalle}`)
+            .join(', ');
+
+        // 3. Crear la cotización en MongoDB
         const nuevaCotizacion = new Cotizacion({
             clienteId: cliente._id,
-            productoSolicitado: analisisIA.productoFormateado, // El producto ya procesado y limpio
+            productoSolicitado: resumenProductos, // Guardas el string compacto "1x Mac Book Pro..., 1x iPhone..."
+            articulosDetallados: analisisIA.productosLista, // 🔥 Asegúrate de tener este campo tipo Array en tu Schema de Mongoose si deseas persistir el JSON exacto
             canalEntrada: canalEntrada,
             estado: 'pendiente_analisis'
         });
@@ -156,20 +163,13 @@ const procesarSolicitudEntrante = async (payload, io) => {
         // 1. Persistir la alerta en MongoDB para la campana de Angular
         const alertaHistorica = new Notificacion({
             titulo: '📦 Nueva Cotización Lista',
-            mensaje: `${cliente.nombre} (${canalEntrada}) solicitó: ${nuevaCotizacion.productoSolicitado}`,
+            mensaje: `${cliente.nombre} (${canalEntrada}) solicitó: ${resumenProductos}`,
             tipo: 'ANALISIS_COMPLETADO',
             referenciaCotizacionId: nuevaCotizacion._id
         });
         await alertaHistorica.save();
 
-        // 2. Avisar a Angular por Sockets enviando tanto la cotización como la notificación de la campana
-        req.io.emit('nueva-solicitud-entrante', payloadFrontend);
-        req.io.emit('nueva-notificacion-campana', alertaHistorica); // <-- Escuchas esto en la campana de Angular
-
-        // 3. Disparar banner flotante al Sistema Operativo
-        await enviarNotificacionPushGlobal(alertaHistorica.titulo, alertaHistorica.mensaje, '/cotizaciones');
-
-        // 4. Formatear la data final limpia para Angular
+        // 4. Formatear la data final limpia para enviar por WebSockets
         const dataParaFrontend = {
             cotizacionId: nuevaCotizacion._id,
             cliente: {
@@ -180,24 +180,34 @@ const procesarSolicitudEntrante = async (payload, io) => {
                 correo: cliente.correo
             },
             productoSolicitado: nuevaCotizacion.productoSolicitado,
+            articulosDetallados: nuevaCotizacion.articulosDetallados, // Enviado directo al modal de Angular
             mensajeOriginal,
             canalEntrada,
             estado: nuevaCotizacion.estado,
             fecha: nuevaCotizacion.fechaSolicitud
         };
 
-        // 🔥 Emitir el evento de Socket.io listo para que Angular dibuje la fila con los datos procesados
+        // Emitir los eventos a Angular en tiempo real
         io.emit('nueva-solicitud-entrante', dataParaFrontend);
-        // 🔥 Disparar notificación push al sistema operativo del usuario
-        const tituloNoti = `📦 Nueva Cotización Lista`;
-        const cuerpoNoti = `${cliente.nombre} (${canalEntrada}) solicitó: ${nuevaCotizacion.productoSolicitado}`;
+        io.emit('nueva-notificacion-campana', alertaHistorica);
 
-        enviarNotificacionPushGlobal(tituloNoti, cuerpoNoti, '/cotizaciones');
+        const tituloNoti = `📦 Nueva Cotización Lista`;
+        const cuerpoNoti = `${cliente.nombre} (${canalEntrada}) solicitó: ${resumenProductos}`;
+        await enviarNotificacionPushGlobal(tituloNoti, cuerpoNoti, '/cotizaciones');
 
         return dataParaFrontend;
 
     } catch (error) {
-        console.error('❌ [CONTROLADOR]: Error al procesar solicitud entrante:', error);
+        console.error("❌ [CONTROLADOR]: Error al procesar solicitud entrante:");
+        console.error(error.stack || error.message || error);
+        
+        // CORREGIDO: Evitamos validar variables inexistentes como 'res' si viene puro de IMAP
+        if (typeof res !== 'undefined' && res.status) {
+            return res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        }
     }
 };
 
@@ -253,7 +263,7 @@ const obtenerClientePorCotizacion = async (req, res) => {
 
         // Buscamos la cotización y extraemos el cliente populado de forma automática
         const cotizacion = await Cotizacion.findById(cotId).populate('clienteId');
-        
+
         if (!cotizacion) {
             return res.status(404).json({ ok: false, msg: 'La cotización solicitada no existe.' });
         }

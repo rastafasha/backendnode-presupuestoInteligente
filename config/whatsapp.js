@@ -19,13 +19,15 @@ const inicializarWhatsApp = (io) => {
             // 🔥 CORRECCIÓN CRÍTICA: Forzamos a puppeteer-core a usar tu Google Chrome nativo de Mac
             executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
             args: [
+                '--disable-accelerated-2d-canvas',
+                '--single-process',
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
+                '--disable-dev-shm-usage', // Evita colapsos por falta de memoria compartida en Docker/Mac
+                '--disable-extensions',
                 '--no-first-run',
                 '--no-zygote',
-                '--single-process'
+                '--single-process' // Obliga a Puppeteer a mantener todo en un solo hilo estable en macOS
             ]
         }
     });

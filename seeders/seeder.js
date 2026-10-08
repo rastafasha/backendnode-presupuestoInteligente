@@ -53,12 +53,16 @@ const ejecutarSeeder = async () => {
         const clientesCreados = await Cliente.insertMany(clientesFalsos);
         console.log(`✅ ${clientesCreados.length} Clientes creados con éxito.`);
 
-        // 5. Estructurar Cotizaciones asociándolas dinámicamente a los IDs de los clientes creados
+        // 5. Estructurar Cotizaciones asociándolas dinámicamente a los IDs y aplicando 'articulosDetallados'
         console.log('📦 Estructurando cotizaciones simulando el comportamiento de Gemini y el Scraper...');
         const cotizacionesFalsas = [
             {
                 clienteId: clientesCreados[0]._id, // Enlazado a Carlos Mendoza
-                productoSolicitado: 'Laptop ASUS Rog Strix 16GB RAM',
+                productoSolicitado: '1x Laptop ASUS Rog Strix 16GB RAM',
+                // 🔥 NUEVO: Desglose estructurado según el nuevo sub-esquema del modelo
+                articulosDetallados: [
+                    { cantidad: 1, productoDetalle: 'Laptop ASUS Rog Strix 16GB RAM' }
+                ],
                 canalEntrada: 'whatsapp',
                 estado: 'listo_para_enviar',
                 proveedoresEncontrados: [
@@ -69,7 +73,11 @@ const ejecutarSeeder = async () => {
             },
             {
                 clienteId: clientesCreados[1]._id, // Enlazado a María Alejandra Silva
-                productoSolicitado: 'Impresora HP Laserjet Pro MFP',
+                productoSolicitado: '1x Impresora HP Laserjet Pro MFP',
+                // 🔥 NUEVO: Desglose estructurado
+                articulosDetallados: [
+                    { cantidad: 1, productoDetalle: 'Impresora HP Laserjet Pro MFP' }
+                ],
                 canalEntrada: 'correo',
                 estado: 'listo_para_enviar',
                 proveedoresEncontrados: [
@@ -79,7 +87,12 @@ const ejecutarSeeder = async () => {
             },
             {
                 clienteId: clientesCreados[2]._id, // Enlazado a Roberto Gómez
-                productoSolicitado: 'Silla Ergonómica de Oficina Ejecutiva',
+                productoSolicitado: '2x Silla Ergonómica de Oficina Ejecutiva, 1x Escritorio de Madera L',
+                // 🔥 NUEVO: Simulando una lista múltiple similar a tu requerimiento de Apple
+                articulosDetallados: [
+                    { cantidad: 2, productoDetalle: 'Silla Ergonómica de Oficina Ejecutiva' },
+                    { cantidad: 1, productoDetalle: 'Escritorio de Madera en L' }
+                ],
                 canalEntrada: 'whatsapp',
                 estado: 'enviado',
                 porcentajeGanancia: 20,
@@ -98,14 +111,14 @@ const ejecutarSeeder = async () => {
         const notificacionesFalsas = [
             {
                 titulo: '📦 Nueva Cotización Lista',
-                mensaje: `${clientesCreados[0].nombre} (whatsapp) solicitó: Laptop ASUS Rog Strix 16GB RAM`,
+                mensaje: `${clientesCreados[0].nombre} (whatsapp) solicitó: 1x Laptop ASUS Rog Strix 16GB RAM`,
                 leido: false,
                 tipo: 'ANALISIS_COMPLETADO',
                 referenciaCotizacionId: cotizacionesCreadas[0]._id
             },
             {
                 titulo: '📩 Nueva Cotización Lista',
-                mensaje: `${clientesCreados[1].nombre} (correo) solicitó: Impresora HP Laserjet Pro MFP`,
+                mensaje: `${clientesCreados[1].nombre} (correo) solicitó: 1x Impresora HP Laserjet Pro MFP`,
                 leido: false,
                 tipo: 'ANALISIS_COMPLETADO',
                 referenciaCotizacionId: cotizacionesCreadas[1]._id
@@ -122,7 +135,7 @@ const ejecutarSeeder = async () => {
         await Notificacion.insertMany(notificacionesFalsas);
         console.log('✅ Historial de notificaciones sembrado con éxito.');
 
-        console.log('\n🚀 ¡Proceso de Seeding completado al 100%! Base de datos lista para pruebas.');
+        console.log('\n🚀 ¡Proceso de Seeding completado al 100%! Base de datos lista para pruebas modernas.');
         process.exit(0);
 
     } catch (error) {
