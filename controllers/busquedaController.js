@@ -11,25 +11,16 @@ const getTodo = async(req, res = response) => {
     const clientesFilter = {
         $or: [
             { name: regex },
-            { ubicacion: regex },
-            { speciality: { $in: specialityIds } },
-            { pais: { $in: paisIds } }
+            { correo: regex },
+            { telefono: regex },
         ]
     };
     
-    if (typeFilter) {
-        clientesFilter.tipoClinica = typeFilter;
-    }
 
-    if (estadoFilter) {
-        clientesFilter.estado_seguimiento = estadoFilter;
-    }
-
-    const [usuarios, clientes, speciality, consultorios, recursos] = await Promise.all([
+    const [usuarios, clientes] = await Promise.all([
         Usuario.find({ username: regex }),
         Cliente.find(clientesFilter).populate('nombre'),
     ]);
-    const searchPaises = Pais.find({ pais: regex });
 
     res.json({
         ok: true,
@@ -41,8 +32,6 @@ const getTodo = async(req, res = response) => {
 const getDocumentosColeccion = async(req, res = response) => {
     const tabla = req.params.tabla;
     const busqueda = req.params.busqueda;
-    const typeFilter = req.query.tipoClinica || null;
-    const estadoFilter = req.query.estado_seguimiento || null;
     
     const regexStr = busqueda === 'all' ? '.*' : busqueda;
     const regex = new RegExp(regexStr, 'i');
@@ -60,20 +49,11 @@ const getDocumentosColeccion = async(req, res = response) => {
             if (busqueda !== 'all') {
                 clientesFilter.$or = [ 
                     { name: regex },
-                    { ubicacion: regex },
-                    { tipoMenu: regex },
-                    { speciality: { $in: specialityIds } },
-                    { pais: { $in: paisIds } }
+                    { correo: regex },
+                    { telefono: regex },
                 ];
             }
 
-            if (typeFilter) {
-                clientesFilter.tipoClinica = typeFilter;
-            }
-            
-            if (estadoFilter) {
-                clientesFilter.estado_seguimiento = estadoFilter;
-            }
 
             data = await Cliente.find(clientesFilter).populate('nombre');
             break;
