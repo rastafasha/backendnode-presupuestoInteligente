@@ -35,12 +35,13 @@ const inicializarWhatsApp = async (io) => {
         }
 
         client = new Client({
-            authTimeoutMs: 240000, // Subimos a 4 minutos de tolerancia para conexiones lentas
-            qrMaxImages: 5,        
+            // 🌟 ELEVACIÓN DE TOLERANCIA DE RED (De 2 a 5 minutos de espera máxima)
+            authTimeoutMs: 300000, 
+            qrMaxImages: 10,        // Permitimos más intentos de refresco para que no aborte si la señal parpadea
             takeoverOnConflict: true, 
-            takeoverTimeoutMs: 15000,
+            takeoverTimeoutMs: 30000,
             
-            authStrategy: estrategiaAutenticacion, // Inyectamos la estrategia elegida
+            authStrategy: estrategiaAutenticacion,
 
             puppeteer: {
                 headless: true,
@@ -58,7 +59,7 @@ const inicializarWhatsApp = async (io) => {
                     '--no-zygote',
                     '--disable-extensions',
                     
-                    // Identidad real de Google Chrome en Mac
+                    // Identidad de Chrome estable de Mac
                     '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
                     
                     '--disable-backgrounding-occluded-windows',
@@ -69,6 +70,10 @@ const inicializarWhatsApp = async (io) => {
                     '--process-per-tab',
                     '--force-device-scale-factor=1',
                     '--disable-component-update',
+
+                    // 🌟 PARCHES SALVADORES PARA CONEXIONES INTERMITENTES:
+                    '--disable-features=IsolateOrigins,site-per-process', // Evita que Chrome asile procesos consumiendo datos de red extra
+                    '--ignore-certificate-errors', // Salta validaciones SSL lentas en redes inestables
 
                     isProduction ? '--js-flags=--max-old-space-size=120' : '--js-flags=--max-old-space-size=4096',
                     ...(isProduction ? ['--single-process'] : [])
