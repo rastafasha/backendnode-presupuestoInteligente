@@ -149,19 +149,23 @@ const enviarPropuestaManual = async (req, res) => {
 
 // Procesar el mensaje entrante (esta función la llamará el evento de WhatsApp)
 
+// Procesar el mensaje entrante (Llamado por los eventos reactivos de GMAIL IMAP o WhatsApp)
 const procesarSolicitudEntrante = async (payload, io) => {
-    // 🌟 AHORA RECIBIMOS: tituloAsunto y fechaOriginal desde ImapFlow o WhatsApp
+    // Recibimos los metadatos puros consolidados desde los oyentes
     const { nombreCliente, telefono, correo, mensajeOriginal, canalEntrada, tituloAsunto, fechaOriginal } = payload;
 
     try {
-        console.log('🧠 [IA]: Enviando mensaje a Gemini para extracción...');
+        console.log('🧠 [IA]: Enviando mensaje a Gemini para extracción estructurada...');
         const analisisIA = await analizarMensajeCotizacion(mensajeOriginal);
 
-        const nombreFinal = analisisIA.nombreExtraido.trim() !== '' ? analisisIA.nombreExtraido : nombreCliente;
+        const nombreFinal = analisisIA.nombreExtraido && analisisIA.nombreExtraido.trim() !== '' 
+            ? analisisIA.nombreExtraido 
+            : nombreCliente;
+            
         const telefonoFinal = telefono || (analisisIA.telefonos ? analisisIA.telefonos.split(',')[0].trim() : undefined);
         const correoFinal = correo || analisisIA.correoContacto || undefined;
 
-        // CRM: Buscar o crear cliente
+        // 1. CRM: Buscar o crear cliente actualizando su ficha comercial con datos finos de la IA
         let cliente = null;
         if (telefonoFinal) {
             cliente = await Cliente.findOne({ telefono: telefonoFinal });
@@ -174,35 +178,55 @@ const procesarSolicitudEntrante = async (payload, io) => {
                 nombre: nombreFinal,
                 telefono: telefonoFinal,
                 correo: correoFinal,
-                empresa: analisisIA.empresa
+                empresa: analisisIA.empresa || 'Particular'
             });
             await cliente.save();
+        } else {
+            let requiereActualizacion = false;
+            if (!cliente.telefono && telefonoFinal) { cliente.telefono = telefonoFinal; requiereActualizacion = true; }
+            if (!cliente.correo && correoFinal) { cliente.correo = correoFinal; requiereActualizacion = true; }
+            if ((!cliente.empresa || cliente.empresa === 'Particular') && analisisIA.empresa && analisisIA.empresa !== 'Particular') { 
+                cliente.empresa = analisisIA.empresa; 
+                requiereActualizacion = true; 
+            }
+            if (requiereActualizacion) await cliente.save();
         }
 
-        // Búsqueda de proveedores en bloque para mitigar el error 429
+        // 2. SCRAPER: Búsqueda de proveedores en bloque optimizada para cuota gratuita (Free Tier)
         let todosLosProveedores = [];
         if (analisisIA.productosLista && analisisIA.productosLista.length > 0) {
             todosLosProveedores = await buscarProveedoresWeb(analisisIA.productosLista);
         }
 
-        const resumenProductos = analisisIA.productosLista
-            .map(p => `${p.cantidad}x ${p.productoDetalle}`)
-            .join(', ');
+        // 🌟 CANDADO ANTI-VALIDATION ERROR: Construimos el string y forzamos un Fallback si viene vacío
+        let resumenProductos = '';
+        if (analisisIA.productosLista && analisisIA.productosLista.length > 0) {
+            resumenProductos = analisisIA.productosLista
+                .map(p => `${p.cantidad}x ${p.productoDetalle}`)
+                .join(', ');
+        }
+        
+        // Si por algún motivo la cadena quedó vacía, le inyectamos un texto válido para cumplir con Mongoose
+        if (!resumenProductos || resumenProductos.trim() === '') {
+            resumenProductos = `Solicitud de Equipos de Tecnología (${canalEntrada})`;
+        }
 
-        // 🚀 GUARDADO EN MONGO: Inyectamos los nuevos metadatos nativos
+        // 3. PERSISTENCIA EN MONGO: Guardamos la cotización de forma segura
         const nuevaCotizacion = new Cotizacion({
             clienteId: cliente._id,
-            tituloAsunto: tituloAsunto || `Presupuesto: ${resumenProductos.substring(0, 30)}...`, // Fallback si no viene asunto
-            fechaRecepcionOriginal: fechaOriginal || new Date(), // Si no viene, asume la hora actual
-            productoSolicitado: resumenProductos, 
-            articulosDetallados: analisisIA.productosLista, 
+            tituloAsunto: tituloAsunto || `Presupuesto: ${resumenProductos.substring(0, 30)}...`,
+            fechaRecepcionOriginal: fechaOriginal || new Date(),
+            productoSolicitado: resumenProductos, // ✅ Validado y blindado contra strings vacíos
+            articulosDetallados: analisisIA.productosLista && analisisIA.productosLista.length > 0 
+                ? analisisIA.productosLista 
+                : [{ cantidad: 1, productoDetalle: mensajeOriginal.substring(0, 50) }], 
             proveedoresEncontrados: todosLosProveedores,   
             canalEntrada: canalEntrada,
             estado: todosLosProveedores.length > 0 ? 'listo_para_enviar' : 'pendiente_analisis'
         });
         await nuevaCotizacion.save();
 
-        // Alerta histórica para la campana de Angular
+        // Alerta histórica para la campana de notificaciones de Angular
         const alertaHistorica = new Notificacion({
             titulo: `📦 ${nuevaCotizacion.tituloAsunto}`,
             mensaje: `${cliente.nombre} solicitó: ${resumenProductos}`,
@@ -211,7 +235,7 @@ const procesarSolicitudEntrante = async (payload, io) => {
         });
         await alertaHistorica.save();
 
-        // 🚀 ENVIAR POR WEBSOCKETS: Agregamos las propiedades para que Angular las lea inmediatamente
+        // 4. TRANSMISIÓN WEBSOCKET: Empaquetamos la carga para inyectar directo al modal de Angular
         const dataParaFrontend = {
             cotizacionId: nuevaCotizacion._id,
             cliente: {
@@ -221,8 +245,8 @@ const procesarSolicitudEntrante = async (payload, io) => {
                 telefono: cliente.telefono,
                 correo: cliente.correo
             },
-            tituloAsunto: nuevaCotizacion.tituloAsunto, // 🌟 Para usar como encabezado en la UI
-            fechaRecepcionOriginal: nuevaCotizacion.fechaRecepcionOriginal, // 🌟 Para mostrar la hora real del email
+            tituloAsunto: nuevaCotizacion.tituloAsunto,
+            fechaRecepcionOriginal: nuevaCotizacion.fechaRecepcionOriginal,
             productoSolicitado: nuevaCotizacion.productoSolicitado,
             articulosDetallados: nuevaCotizacion.articulosDetallados, 
             proveedoresEncontrados: nuevaCotizacion.proveedoresEncontrados, 
@@ -232,23 +256,27 @@ const procesarSolicitudEntrante = async (payload, io) => {
             fecha: nuevaCotizacion.fechaSolicitud
         };
 
-        // 🔥 REINYECCIÓN CLAVE: Activamos la notificación Push Web para el navegador
-         const tituloNoti = `📦 Nueva Cotización Lista`;
+        // Emitimos los eventos asíncronos en tiempo real por los sockets unificados
+        io.emit('nueva-solicitud-entrante', dataParaFrontend);
+        io.emit('nueva-notificacion-campana', alertaHistorica);
+
+        // 5. NOTIFICACIÓN PUSH WEB: Despachamos la alerta nativa al navegador del SuperAdmin
+        const tituloNoti = `📦 Nueva Cotización Lista`;
         const cuerpoNoti = `${cliente.nombre} (${canalEntrada}) solicitó: ${resumenProductos}`;
-        
-        // Formateamos la URL de destino simulando los queryParams que espera tu router de Angular
         const rutaDestinoAngular = `/dashboard/clients?cotId=${nuevaCotizacion._id}`;
         
         await enviarNotificacionPushGlobal(tituloNoti, cuerpoNoti, rutaDestinoAngular);
-        console.log(`🚀 [WEBPUSH]: Alerta despachada apuntando a: ${rutaDestinoAngular}`);
+        console.log(`🚀 [WEBPUSH]: Alerta comercial despachada con éxito hacia: ${rutaDestinoAngular}`);
 
-        return dataParaFrontend;
+        // 🌟 CORRECCIÓN EXTRA: Eliminamos el segundo 'return' duplicado que generaba ruido sintáctico
         return dataParaFrontend;
 
     } catch (error) {
-        console.error("❌ [CONTROLADOR]: Error crítico al procesar solicitud entrante:", error);
+        console.error("❌ [CONTROLADOR]: Error crítico al procesar solicitud entrante:");
+        console.error(error.stack || error.message || error);
     }
 };
+
 
 const obtenerHistorialCotizaciones = async (req, res) => {
     try {

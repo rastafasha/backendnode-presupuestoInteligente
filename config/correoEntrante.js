@@ -7,9 +7,8 @@ let ioInstance;
 const inicializarLectorCorreos = (io) => {
     ioInstance = io;
 
-    const conectarYEscuchar = async () => {
-        // 🌟 LA CLAVE ANTI-REUSE: Instanciamos el cliente ADENTRO de la función de conexión.
-        // Forzamos manualmente el string 'imap.gmail.com' limpio para evitar que tome basura del .env
+       const conectarYEscuchar = async () => {
+        // Instanciamos el cliente adentro de la función de conexión para evitar que se congele.
         const client = new ImapFlow({
             host: 'imap.gmail.com', 
             port: 993,
@@ -19,6 +18,12 @@ const inicializarLectorCorreos = (io) => {
                 pass: process.env.EMAIL_PASS
             },
             logger: false
+        });
+
+        // 🌟 EL ESCUCHADOR SALVADOR: Evita que Node.js crashee (Unhandled error) si Gmail da un Timeout de red
+        client.on('error', (err) => {
+            console.error('⚠️ [GMAIL IMAP SOCKET ERROR]: Detectado parpadeo de red o Timeout:', err.message);
+            // No hacemos nada más aquí; dejamos que el evento 'close' o el catch superior gatillen el reintento limpio
         });
 
         try {
@@ -51,9 +56,9 @@ const inicializarLectorCorreos = (io) => {
                         console.log(`📩 [GMAIL IMAP]: Solicitud válida detectada por correo electrónico de: ${correoParseado.from.text}`);
 
                         const payloadInicial = {
-                            nombreCliente: correoParseado.from.value[0].name || 'Cliente por Correo',
+                            nombreCliente: correoParseado.from.value.name || 'Cliente por Correo',
                             telefono: undefined, 
-                            correo: correoParseado.from.value[0].address,
+                            correo: correoParseado.from.value.address,
                             mensajeOriginal: cuerpoTexto || asunto,
                             canalEntrada: 'correo',
                             tituloAsunto: asunto || 'Solicitud de Presupuesto',
@@ -63,26 +68,23 @@ const inicializarLectorCorreos = (io) => {
                         await procesarSolicitudEntrante(payloadInicial, ioInstance);
 
                         await client.messageFlagsAdd(ultimoId, ['\\Seen']);
-                    } else {
-                        // Línea de debugging recomendada para que veas en consola qué correos está ignorando el sistema
-                        console.log(`ℹ️ [GMAIL IMAP]: Correo ignorado (No cumple con palabras clave). Asunto: "${asunto}"`);
                     }
                 });
             } finally {
                 // Liberamos el buzón de correo de forma segura
-                lock.release();
+                if (lock) lock.release();
             }
 
-            // Manejador extra por si el servidor de Gmail cierra la conexión de forma abrupta por inactividad
+            // Manejador por si el servidor de Gmail cierra la conexión abruptamente por inactividad (Idletimeout)
             client.on('close', () => {
-                console.warn('⚠️ [GMAIL IMAP]: Conexión cerrada por el servidor. Intentando reconectar en 30s...');
+                console.warn('⚠️ [GMAIL IMAP]: Conexión cerrada. Intentando reconectar de forma limpia en 30s...');
                 setTimeout(conectarYEscuchar, 30000);
             });
 
         } catch (err) {
             console.error('❌ [GMAIL IMAP ERROR]: Falló la conexión del lector:', err.message);
             
-            // 🛡️ Cerramos la instancia colgada de forma segura si existiera
+            // Cerramos la instancia colgada de forma segura si existiera
             try { await client.logout(); } catch(e) {}
             
             // Reintento automático generando una instancia totalmente nueva en el próximo ciclo
@@ -90,6 +92,7 @@ const inicializarLectorCorreos = (io) => {
             setTimeout(conectarYEscuchar, 30000);
         }
     };
+
 
     // Arrancamos el primer ciclo de escucha
     conectarYEscuchar();
