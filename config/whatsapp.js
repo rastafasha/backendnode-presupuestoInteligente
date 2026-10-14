@@ -1,6 +1,7 @@
 const { Client, LocalAuth, RemoteAuth } = require('whatsapp-web.js');
-const { MongoStore } = require('wwebjs-mongo'); 
+const { MongoStore } = require('wwebjs-mongo');
 const { procesarSolicitudEntrante } = require('../controllers/cotizacionController');
+const ConexionWhatsapp = require('../models/ConexionWhatsapp');
 const mongoose = require('mongoose');
 const path = require('path');
 const fs = require('fs');
@@ -24,7 +25,7 @@ const inicializarWhatsApp = async (io) => {
                 store: store,
                 backupSyncIntervalMs: 300000,
                 clientId: 'presupuesto-inteligente-prod',
-                dataPath: '/tmp' 
+                dataPath: '/tmp'
             });
         } else {
             console.log('💻 [DESARROLLO LOCAL]: Activando LocalAuth directo en tu Mac (Inmune a caídas de red)...');
@@ -36,20 +37,20 @@ const inicializarWhatsApp = async (io) => {
 
         client = new Client({
             // 🌟 ELEVACIÓN DE TOLERANCIA DE RED (De 2 a 5 minutos de espera máxima)
-            authTimeoutMs: 300000, 
+            authTimeoutMs: 300000,
             qrMaxImages: 10,        // Permitimos más intentos de refresco para que no aborte si la señal parpadea
-            takeoverOnConflict: true, 
+            takeoverOnConflict: true,
             takeoverTimeoutMs: 30000,
-            
+
             authStrategy: estrategiaAutenticacion,
 
             puppeteer: {
                 headless: true,
-                defaultViewport: { width: 1024, height: 768 }, 
+                defaultViewport: { width: 1024, height: 768 },
                 executablePath: isProduction
                     ? '/opt/render/project/src/.cache/puppeteer/chrome/linux-151.0.7922.71/chrome-linux64/chrome'
                     : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-                
+
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -58,10 +59,10 @@ const inicializarWhatsApp = async (io) => {
                     '--no-first-run',
                     '--no-zygote',
                     '--disable-extensions',
-                    
+
                     // Identidad de Chrome estable de Mac
                     '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-                    
+
                     '--disable-backgrounding-occluded-windows',
                     '--disable-background-timer-throttling',
                     '--disable-renderer-backgrounding',
@@ -148,7 +149,7 @@ const inicializarWhatsApp = async (io) => {
         client.on('disconnected', async (reason) => {
             console.warn('⚠️ [WHATSAPP]: Cliente desconectado. Reiniciando de forma limpia:', reason);
             ioInstance.emit('whatsapp-status', { estado: 'desconectado', detalle: reason });
-            try { await client.destroy(); } catch (e) {}
+            try { await client.destroy(); } catch (e) { }
             inicializarWhatsApp(ioInstance);
         });
 
@@ -163,22 +164,28 @@ const inicializarWhatsApp = async (io) => {
             if (contienePalabraClave) {
                 console.log(`📩 [WHATSAPP]: Mensaje clave detectado de [${msg.from}]`);
                 try {
+                    // Extraemos metadatos rápidos nativos de la librería de WhatsApp
                     const contacto = await msg.getContact();
                     const nombreCliente = contacto.pushname || 'Cliente por WhatsApp';
-                    const telefono = msg.from.replace('@c.us', '');
+                    
+                    // Extraemos los dígitos limpios directamente de msg.from
+                    const telefonoEnvioCrudo = msg.from.replace('@c.us', ''); 
 
                     const payloadInicial = {
                         nombreCliente,
-                        telefono: `+${telefono}`, 
+                        telefono: `+${telefonoEnvioCrudo}`, // Enviamos el ID nativo crudo para que lo procese el controlador
                         mensajeOriginal: msg.body,
                         canalEntrada: 'whatsapp',
                         tituloAsunto: `Mensaje de WhatsApp - ${nombreCliente}`,
                         fechaOriginal: new Date()
                     };
 
+                    console.log('🚀 [WHATSAPP]: Despachando payload directo al controlador:', payloadInicial);
+                    
+                    // Invocamos el controlador unificado
                     await procesarSolicitudEntrante(payloadInicial, ioInstance);
                 } catch (err) {
-                    console.error('❌ [WHATSAPP REQUERIMIENTO ERROR]:', err);
+                    console.error('❌ [WHATSAPP REQUERIMIENTO ERROR]:', err.stack || err.message);
                 }
             }
         });
@@ -199,7 +206,45 @@ const inicializarWhatsApp = async (io) => {
     }
 };
 
+
+/**
+ * Despacha un mensaje de texto plano o con formato a través del cliente activo de whatsapp-web.js
+ * @param {string} idInstancia - ID del sistema o del operador (ej: 'presupuesto-inteligente')
+ * @param {string} numero - El número de teléfono limpio (ej: 54911xxxxxxx)
+ * @param {string} mensaje - El texto formateado de la propuesta comercial
+ * @returns {Promise<boolean>} - Devuelve true si el mensaje se envió con éxito
+ */
+const enviarMensajeWhatsApp = async (idInstancia, numero, mensaje) => {
+    try {
+        // 1. Recuperar el cliente activo de la pasarela híbrida auto-adaptable
+        const client = getWhatsappClient();
+
+        // 2. Control de seguridad por si el bot no está inicializado o escaneado
+        if (!client || !client.info || !client.info.wid) {
+            console.error(`❌ [WHATSAPP ERROR]: El cliente '${idInstancia}' no está listo o falta escanear el QR.`);
+            return false;
+        }
+
+        // 3. Estructurar el JID oficial de WhatsApp Web (@c.us)
+        // Agregamos un fallback por si el número ya trae el formato de sufijo por error
+        const whatsappJID = numero.includes('@c.us') ? numero : `${numero}@c.us`;
+
+        console.log(`📡 [WHATSAPP DISPARADOR]: Enviando presupuesto formal a [${whatsappJID}]...`);
+
+        // 4. Enviar el mensaje usando el método nativo del cliente de Puppeteer
+        await client.sendMessage(whatsappJID, mensaje);
+
+        console.log(`✅ [WHATSAPP EXITO]: Mensaje enviado correctamente.`);
+        return true;
+
+    } catch (error) {
+        console.error(`❌ [CRÍTICO ENVIAR WHATSAPP]: Falló el despacho del mensaje para ${numero}:`, error.message);
+        return false;
+    }
+};
+
 module.exports = {
     inicializarWhatsApp,
+    enviarMensajeWhatsApp,
     getWhatsappClient: () => client
 };

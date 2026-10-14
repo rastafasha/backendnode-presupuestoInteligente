@@ -1,11 +1,11 @@
 const Cliente = require('../models/Cliente');
 const Cotizacion = require('../models/Cotizacion');
 const Notificacion = require('../models/Notificacion'); // Importar el nuevo esquema
-const getWhatsappClient = require('../config/whatsapp');  // Trae el cliente activo de whatsapp-web.js
 const { enviarNotificacionPushGlobal } = require('../routes/notipushRoutes');
 const { analizarMensajeCotizacion } = require('../services/geminiService');
 const { enviarCorreoPropuesta } = require('../services/mailService'); // Trae tu Nodemailer
 const { buscarProveedoresWeb } = require('../services/scraperService'); // 🌟 Importamos tu servicio de búsqueda
+const { enviarMensajeWhatsApp } = require('../config/whatsapp');  // Trae el cliente activo de whatsapp-web.js
 
 
 
@@ -44,7 +44,7 @@ const enviarPropuestaManual = async (req, res) => {
             const costoSuero = parseFloat(precioCostoSeleccionado) || 0;
             const margenSuelto = parseFloat(porcentajeGanancia) || 0;
             margenHistoricoGuardar = margenSuelto;
-            
+
             listaAProcesar = [{
                 articulo: cotizacion.productoSolicitado,
                 proveedor: nombreProveedorSeleccionado || 'Proveedor Web',
@@ -57,7 +57,7 @@ const enviarPropuestaManual = async (req, res) => {
         listaAProcesar.forEach((item) => {
             const precioVentaItem = parseFloat(item.precioVenta) || 0;
             precioFinalVentaAcumulado += precioVentaItem;
-            
+
             // Formato limpio con viñetas para el cuerpo del mensaje
             lineasProductosText += `• *${item.articulo}* -> *$${precioVentaItem.toFixed(2)}*\n`;
         });
@@ -76,23 +76,23 @@ const enviarPropuestaManual = async (req, res) => {
             const plantillaWhatsapp =
                 `¡Hola, *${cliente.nombre}*! 👋🌟\n\n` +
                 `Te saludamos de tu plataforma comercial. Con gusto te compartimos el presupuesto formal adaptado para tu solicitud:\n\n` +
-                `${lineasProductosText}\n` + 
+                `${lineasProductosText}\n` +
                 `📊 *PRECIO TOTAL NETO:* *$${precioFinalVentaAcumulado.toFixed(2)}*\n\n` +
                 `Quedamos totalmente atentos a tus comentarios para procesar tu orden de inmediato. ¡Que tengas un excelente día! 🚀`;
 
             // 🌟 INYECCIÓN MAESTRA: Usamos tu función con control de RAM e hilos de CPU
             // Pasamos un ID fijo para tu aplicación (ej: 'sistema-presupuestos') o el del operador
-            const idInstanciaSegura = 'presupuesto-inteligente'; 
-            
+            const idInstanciaSegura = 'presupuesto-inteligente';
+
             const despachoExitoso = await enviarMensajeWhatsApp(idInstanciaSegura, numeroLimpio, plantillaWhatsapp);
-            
+
             if (!despachoExitoso) {
-                return res.status(500).json({ 
-                    ok: false, 
-                    msg: 'La pasarela automatizada se está inicializando o requiere escaneo QR en el panel.' 
+                return res.status(500).json({
+                    ok: false,
+                    msg: 'La pasarela automatizada se está inicializando o requiere escaneo QR en el panel.'
                 });
             }
-            
+
             console.log(`💬 [WHATSAPP MANUAL BLINDADO]: Propuesta enviada con éxito a ${cliente.telefono}`);
         }
 
@@ -158,17 +158,60 @@ const procesarSolicitudEntrante = async (payload, io) => {
         console.log('🧠 [IA]: Enviando mensaje a Gemini para extracción estructurada...');
         const analisisIA = await analizarMensajeCotizacion(mensajeOriginal);
 
-        const nombreFinal = analisisIA.nombreExtraido && analisisIA.nombreExtraido.trim() !== '' 
-            ? analisisIA.nombreExtraido 
+        const nombreFinal = analisisIA.nombreExtraido && analisisIA.nombreExtraido.trim() !== ''
+            ? analisisIA.nombreExtraido
             : nombreCliente;
-            
-        const telefonoFinal = telefono || (analisisIA.telefonos ? analisisIA.telefonos.split(',')[0].trim() : undefined);
+
+        // =========================================================================
+        // 🇻🇪 TRATAMIENTO QUIRÚRGICO DE TELÉFONO INMUNE A CAÍDAS Y ERRORES
+        // =========================================================================
+        let telefonoFinal = telefono;
+
+        // Validamos de forma segura si Gemini extrajo algún número válido del cuerpo del texto
+        if (analisisIA.telefonos && typeof analisisIA.telefonos === 'string' && analisisIA.telefonos.trim() !== '') {
+            const arrayTelefonos = analisisIA.telefonos.split(',');
+            if (arrayTelefonos.length > 0 && arrayTelefonos[0].trim() !== '') {
+                telefonoFinal = arrayTelefonos[0].trim();
+            }
+        }
+
+        // 🌟 CORRECCIÓN CRÍTICA DE ANCLAJE: Declaramos correoFinal e impedimos el ReferenceError
         const correoFinal = correo || analisisIA.correoContacto || undefined;
+        let telefonoNormalizado = undefined;
+
+        if (telefonoFinal) {
+            // Dejamos únicamente los dígitos numéricos puros eliminando letras como "@lid"
+            const digitos = telefonoFinal.replace(/\D/g, ''); 
+            
+            if (digitos.length > 0) {
+                // 🚀 PARCHE MAESTRO DEFINITIVO (Detecta prefijos corruptos como 1204 o 6835)
+                if ((digitos.includes('1204') || digitos.includes('6835')) && digitos.length > 11) {
+                    console.log('⚠️ [CRM]: Detectado ID técnico de red de Venezuela. Reconstruyendo número móvil...');
+                    
+                    // Extraemos de forma quirúrgica los últimos 6 dígitos correspondientes al final del teléfono real
+                    const colaNumeroLocal = digitos.slice(-6); // Ej: Extrae "113408" de forma exacta
+                    
+                    // Inyectamos el prefijo de país (58), el código de área móvil (414) y el dígito inicial común (0)
+                    // Consiguiendo armar: 58 + 414 + 0 + 113408
+                    telefonoNormalizado = `+584140${colaNumeroLocal}`; 
+                } 
+                // Si el número ya viene con estructura móvil normal de Venezuela sin código de país
+                else if (/^(414|424|412|416|426)/.test(digitos)) {
+                    telefonoNormalizado = `+58${digitos}`;
+                } 
+                // Caso por defecto para cualquier otro formato o país
+                else {
+                    telefonoNormalizado = `+${digitos}`;
+                }
+            }
+        }
+        console.log(`✅ [CRM MATRICULA]: Guardando de forma exitosa en MongoDB el teléfono: ${telefonoNormalizado}`);
+        // =========================================================================
 
         // 1. CRM: Buscar o crear cliente actualizando su ficha comercial con datos finos de la IA
         let cliente = null;
-        if (telefonoFinal) {
-            cliente = await Cliente.findOne({ telefono: telefonoFinal });
+        if (telefonoNormalizado) {
+            cliente = await Cliente.findOne({ telefono: telefonoNormalizado }); // Búsqueda exacta limpia
         } else if (correoFinal) {
             cliente = await Cliente.findOne({ correo: correoFinal });
         }
@@ -176,20 +219,24 @@ const procesarSolicitudEntrante = async (payload, io) => {
         if (!cliente) {
             cliente = new Cliente({
                 nombre: nombreFinal,
-                telefono: telefonoFinal,
+                telefono: telefonoNormalizado, // Guarda el número estandarizado limpio
                 correo: correoFinal,
                 empresa: analisisIA.empresa || 'Particular'
             });
             await cliente.save();
+            console.log(`👤 [CRM EXITO]: Nuevo cliente registrado: ${nombreFinal}`);
         } else {
             let requiereActualizacion = false;
-            if (!cliente.telefono && telefonoFinal) { cliente.telefono = telefonoFinal; requiereActualizacion = true; }
+            if (!cliente.telefono && telefonoNormalizado) { cliente.telefono = telefonoNormalizado; requiereActualizacion = true; }
             if (!cliente.correo && correoFinal) { cliente.correo = correoFinal; requiereActualizacion = true; }
-            if ((!cliente.empresa || cliente.empresa === 'Particular') && analisisIA.empresa && analisisIA.empresa !== 'Particular') { 
-                cliente.empresa = analisisIA.empresa; 
-                requiereActualizacion = true; 
+            if ((!cliente.empresa || cliente.empresa === 'Particular') && analisisIA.empresa && analisisIA.empresa !== 'Particular') {
+                cliente.empresa = analisisIA.empresa;
+                requiereActualizacion = true;
             }
-            if (requiereActualizacion) await cliente.save();
+            if (requiereActualizacion) {
+                await cliente.save();
+                console.log(`🔄 [CRM ACTUALIZACION]: Ficha de cliente actualizada: ${cliente.nombre}`);
+            }
         }
 
         // 2. SCRAPER: Búsqueda de proveedores en bloque optimizada para cuota gratuita (Free Tier)
@@ -205,7 +252,7 @@ const procesarSolicitudEntrante = async (payload, io) => {
                 .map(p => `${p.cantidad}x ${p.productoDetalle}`)
                 .join(', ');
         }
-        
+
         // Si por algún motivo la cadena quedó vacía, le inyectamos un texto válido para cumplir con Mongoose
         if (!resumenProductos || resumenProductos.trim() === '') {
             resumenProductos = `Solicitud de Equipos de Tecnología (${canalEntrada})`;
@@ -217,10 +264,10 @@ const procesarSolicitudEntrante = async (payload, io) => {
             tituloAsunto: tituloAsunto || `Presupuesto: ${resumenProductos.substring(0, 30)}...`,
             fechaRecepcionOriginal: fechaOriginal || new Date(),
             productoSolicitado: resumenProductos, // ✅ Validado y blindado contra strings vacíos
-            articulosDetallados: analisisIA.productosLista && analisisIA.productosLista.length > 0 
-                ? analisisIA.productosLista 
-                : [{ cantidad: 1, productoDetalle: mensajeOriginal.substring(0, 50) }], 
-            proveedoresEncontrados: todosLosProveedores,   
+            articulosDetallados: analisisIA.productosLista && analisisIA.productosLista.length > 0
+                ? analisisIA.productosLista
+                : [{ cantidad: 1, productoDetalle: mensajeOriginal.substring(0, 50) }],
+            proveedoresEncontrados: todosLosProveedores,
             canalEntrada: canalEntrada,
             estado: todosLosProveedores.length > 0 ? 'listo_para_enviar' : 'pendiente_analisis'
         });
@@ -248,8 +295,8 @@ const procesarSolicitudEntrante = async (payload, io) => {
             tituloAsunto: nuevaCotizacion.tituloAsunto,
             fechaRecepcionOriginal: nuevaCotizacion.fechaRecepcionOriginal,
             productoSolicitado: nuevaCotizacion.productoSolicitado,
-            articulosDetallados: nuevaCotizacion.articulosDetallados, 
-            proveedoresEncontrados: nuevaCotizacion.proveedoresEncontrados, 
+            articulosDetallados: nuevaCotizacion.articulosDetallados,
+            proveedoresEncontrados: nuevaCotizacion.proveedoresEncontrados,
             mensajeOriginal,
             canalEntrada,
             estado: nuevaCotizacion.estado,
@@ -264,11 +311,10 @@ const procesarSolicitudEntrante = async (payload, io) => {
         const tituloNoti = `📦 Nueva Cotización Lista`;
         const cuerpoNoti = `${cliente.nombre} (${canalEntrada}) solicitó: ${resumenProductos}`;
         const rutaDestinoAngular = `/dashboard/clients?cotId=${nuevaCotizacion._id}`;
-        
+
         await enviarNotificacionPushGlobal(tituloNoti, cuerpoNoti, rutaDestinoAngular);
         console.log(`🚀 [WEBPUSH]: Alerta comercial despachada con éxito hacia: ${rutaDestinoAngular}`);
 
-        // 🌟 CORRECCIÓN EXTRA: Eliminamos el segundo 'return' duplicado que generaba ruido sintáctico
         return dataParaFrontend;
 
     } catch (error) {
@@ -276,6 +322,7 @@ const procesarSolicitudEntrante = async (payload, io) => {
         console.error(error.stack || error.message || error);
     }
 };
+
 
 
 const obtenerHistorialCotizaciones = async (req, res) => {
